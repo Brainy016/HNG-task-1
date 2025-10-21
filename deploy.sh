@@ -142,7 +142,7 @@ ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
   # Build and start the application
   if [ -f "docker-compose.yml" ]; then
     echo "Using docker-compose for deployment..."
-    echo "WARNING: Make sure your docker-compose.yml maps your service to port 80."
+    echo "WARNING: Make sure your docker-compose.yml maps your service to port $APP_PORT (e.g., '3000:3000')"
     
     # Stop existing docker-compose containers safely
     echo "Stopping existing docker-compose containers..."
