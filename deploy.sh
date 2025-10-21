@@ -23,7 +23,7 @@ echo "Configuration received. Starting deployment..."
 echo "-----------------------------------"
 
 
-# --- 2. Setup Logging & Error Handling ---
+# --- 2. Setup Logging & Error Handling 
 LOG_FILE="deploy_$(date +%Y%m%d_%H%M%S).log"
 # Redirect all subsequent stdout/stderr to both console and log file
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -297,7 +297,7 @@ if curl -f "http://$REMOTE_IP"; then
   log "SUCCESS: Remote validation passed. Application is LIVE at http://$REMOTE_IP"
 else
   log "ERROR: Remote validation FAILED. The site http://$REMOTE_IP is not accessible."
-  exit 7 # Exit code for final validation fail
+  exit 7 
 fi
 
 
