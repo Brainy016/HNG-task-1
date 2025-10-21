@@ -1,97 +1,95 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
-# --- 1. Collect User Parameters (No logging yet) ---
-# Git details
-read -p "Enter the Git repository URL: " GIT_REPO_URL
-read -sp "Enter your Git Personal Access Token (input will be hidden): " GIT_PAT
-echo # Add a newline after hidden input
-read -p "Enter the branch name (default: main): " branch_name
+# POSIX trap for interrupts (Ctrl+C)
+handle_interrupt() {
+  # We redirect to stderr (>&2) so it appears even if stdout is piped
+  printf "\n--- INTERRUPTED: Deployment Halted ---\n" >&2
+  exit 130
+}
+trap 'handle_interrupt' INT TERM
+
+# --- 1. Collect User Parameters ---
+# All prompts are written to stderr (>&2) so they appear on the
+# console even when stdout is piped to a log file.
+
+# POSIX-compliant prompt (no 'read -p')
+printf "Enter the Git repository URL: " >&2
+read GIT_REPO_URL
+
+# POSIX-compliant silent prompt (no 'read -s')
+printf "Enter your Git Personal Access Token (input will be hidden): " >&2
+stty -echo
+read GIT_PAT
+stty echo
+printf "\n" >&2 # Add the newline
+
+printf "Enter the branch name (default: main): " >&2
+read branch_name
 BRANCH_NAME=${branch_name:-main}
 
-# SSH details
-read -p "Enter the remote server's SSH username: " REMOTE_USER
-read -p "Enter the remote server's IP address: " REMOTE_IP
-read -p "Enter the path to your SSH private key (e.g., ~/.ssh/id_rsa): " SSH_KEY_PATH
+printf "Enter the remote server's SSH username: " >&2
+read REMOTE_USER
+printf "Enter the remote server's IP address: " >&2
+read REMOTE_IP
+printf "Enter the path to your SSH private key (e.g., ~/.ssh/id_rsa): " >&2
+read SSH_KEY_PATH
 
-# Application details
-read -p "Enter the application's internal container port (e.g., 3000): " APP_PORT
+printf "Enter the application's internal container port (e.g., 3000): " >&2
+read APP_PORT
 
 echo ""
 echo "-----------------------------------"
 echo "Configuration received. Starting deployment..."
 echo "-----------------------------------"
+echo "Configuration:"
+echo "Repo URL: $GIT_REPO_URL"
+echo "Branch: $BRANCH_NAME"
+echo "SSH User: $REMOTE_USER"
+echo "Server IP: $REMOTE_IP"
+echo "SSH Key: $SSH_KEY_PATH"
+echo "App Port: $APP_PORT"
+echo "PAT: [HIDDEN]"
+echo "-----------------------------------"
 
 
-# --- 2. Setup Logging & Error Handling 
-LOG_FILE="deploy_$(date +%Y%m%d_%H%M%S).log"
-# Redirect all subsequent stdout/stderr to both console and log file
-exec > >(tee -a "$LOG_FILE") 2>&1
+# --- 2. Prepare Source Code ---
+# POSIX-compliant parameter expansion
+_temp_name=$(basename "$GIT_REPO_URL")
+REPO_NAME=${_temp_name%.git}
 
-# Function for timestamped logs
-log() {
-  echo "[$(date +'%Y-%m-%d %H:%M:%S')] - $1"
-}
-
-# Function to handle errors
-handle_error() {
-  local exit_code=$?
-  local line_number=$1
-  local command=$2
-  log "ERROR: Command '$command' failed on line $line_number with exit code $exit_code"
-  log "Deployment FAILED. See $LOG_FILE for details."
-  exit $exit_code
-}
-
-# Trap ERR signals to call our error handler
-trap 'handle_error $LINENO "$BASH_COMMAND"' ERR
-
-log "Script started. Logging to $LOG_FILE"
-log "-----------------------------------"
-log "Configuration:"
-log "Repo URL: $GIT_REPO_URL"
-log "Branch: $BRANCH_NAME"
-log "SSH User: $REMOTE_USER"
-log "Server IP: $REMOTE_IP"
-log "SSH Key: $SSH_KEY_PATH"
-log "App Port: $APP_PORT"
-log "PAT: [HIDDEN]"
-log "-----------------------------------"
-
-
-# --- 3. Prepare Source Code ---
-REPO_NAME=$(basename -s .git "$GIT_REPO_URL")
-
-log "--- Preparing source code ---"
+echo "--- Preparing source code ---"
 
 if [ -d "$REPO_NAME" ]; then
-  log "Repository '$REPO_NAME' already exists. Pulling latest changes..."
+  echo "Repository '$REPO_NAME' already exists. Pulling latest changes..."
   cd "$REPO_NAME"
   git checkout "$BRANCH_NAME"
   git pull origin "$BRANCH_NAME"
 else
-  log "Cloning repository '$REPO_NAME'"
+  echo "Cloning repository '$REPO_NAME'"
+  # POSIX-compliant parameter expansion
   CLONE_URL="https://oauth2:${GIT_PAT}@${GIT_REPO_URL#https://}"
   git clone --branch "$BRANCH_NAME" "$CLONE_URL"
   cd "$REPO_NAME"
 fi
 
-log "Successfully checked out branch '$BRANCH_NAME'."
+echo "Successfully checked out branch '$BRANCH_NAME'."
 
-log "--- Verifying project structure ---"
+echo "--- Verifying project structure ---"
 if [ -f "Dockerfile" ] || [ -f "docker-compose.yml" ]; then
-  log "Found Dockerfile or docker-compose.yml. Project is deployable."
+  echo "Found Dockerfile or docker-compose.yml. Project is deployable."
 else
-  log "Error: Neither Dockerfile nor docker-compose.yml found in the repository root."
+  echo "Error: Neither Dockerfile nor docker-compose.yml found in the repository root."
   exit 1
 fi
 
-log "--- Source code preparation complete ---"
+echo "--- Source code preparation complete ---"
 
 
-# --- 4. Prepare Remote Server ---
-log "--- Connecting to remote server $REMOTE_USER@$REMOTE_IP ---"
+# --- 3. Prepare Remote Server ---
+echo "--- Connecting to remote server $REMOTE_USER@$REMOTE_IP ---"
 
+# 'EOF' is quoted to prevent local variable expansion
 ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$REMOTE_USER"@"$REMOTE_IP" << 'EOF'
 
   set -e
@@ -102,29 +100,29 @@ ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
   echo "--- (Remote) Checking for required packages ---"
   PACKAGES_TO_INSTALL=""
   
-  if ! command -v docker &> /dev/null; then
+  # POSIX-compliant redirect
+  if ! command -v docker > /dev/null 2>&1; then
     echo "Docker not found, adding to install list."
     PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL docker.io"
   else
     echo "Docker is already installed."
   fi
   
-  if ! command -v docker-compose &> /dev/null; then
+  if ! command -v docker-compose > /dev/null 2>&1; then
     echo "Docker Compose not found, adding to install list."
     PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL docker-compose"
   else
     echo "Docker Compose is already installed."
   fi
   
-  if ! command -v nginx &> /dev/null; then
+  if ! command -v nginx > /dev/null 2>&1; then
     echo "Nginx not found, adding to install list."
     PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL nginx"
   else
     echo "Nginx is already installed."
   fi
   
-  # Install curl for health checks
-  if ! command -v curl &> /dev/null; then
+  if ! command -v curl > /dev/null 2>&1; then
     echo "curl not found, adding to install list."
     PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL curl"
   fi
@@ -150,7 +148,8 @@ ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
   echo "Nginx service is active."
 
   echo "--- (Remote) Configuring Docker group ---"
-  if ! getent group docker | grep -q "\b$USER\b"; then
+  # POSIX-compliant grep -w (whole word)
+  if ! getent group docker | grep -q -w "$USER"; then
     echo "Adding user '$USER' to the 'docker' group."
     sudo usermod -aG docker "$USER"
     echo "WARNING: Group changes may require a new login session to take effect."
@@ -161,17 +160,18 @@ ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
   echo "(Remote) Server preparation complete."
 EOF
 
-log "--- Server preparation finished ---"
+echo "--- Server preparation finished ---"
 
 
-# --- 5. Deploy Application to Remote Server ---
-log "--- Deploying application to remote server ---"
+# --- 4. Deploy Application to Remote Server ---
+echo "--- Deploying application to remote server ---"
 
-log "Transferring source code to remote server..."
+echo "Transferring source code to remote server..."
 rsync -avz --delete -e "ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
   ./"$REPO_NAME"/ "$REMOTE_USER@$REMOTE_IP:~/app/"
 
-log "Running remote deployment and validation..."
+echo "Running remote deployment and validation..."
+# EOF is NOT quoted, allowing $APP_PORT and $REMOTE_IP to expand
 ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$REMOTE_USER"@"$REMOTE_IP" << EOF
   set -e
   
@@ -184,11 +184,11 @@ ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
   
   if [ -f "docker-compose.yml" ]; then
     echo "Using docker-compose for deployment..."
-    # Corrected Warning:
     echo "WARNING: Make sure your docker-compose.yml maps its service to port $APP_PORT"
     
     echo "Stopping existing docker-compose containers..."
-    docker-compose down 2>/dev/null || true
+    # Correctly silence both stdout and stderr
+    docker-compose down > /dev/null 2>&1 || true
     
     echo "Building and starting new containers..."
     docker-compose up --build -d
@@ -199,15 +199,15 @@ ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
     if ! docker-compose ps | grep -q "Up"; then
       echo "Error: Containers failed to start properly"
       docker-compose logs
-      exit 2 # Exit code for compose start fail
+      exit 2
     fi
     echo "Application deployed successfully with docker-compose!"
 
     echo "--- (Remote) Validating compose app health (http://localhost:$APP_PORT) ---"
-    if ! curl -f http://localhost:$APP_PORT; then
+    if ! curl -f --connect-timeout 10 --max-time 30 http://localhost:$APP_PORT; then
         echo "ERROR: Health check failed for compose app at http://localhost:$APP_PORT"
         docker-compose logs
-        exit 3 # Exit code for compose health fail
+        exit 3
     fi
     echo "--- (Remote) Compose health check passed ---"
     
@@ -218,8 +218,9 @@ ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
     docker build -t app-deployment .
     
     echo "Stopping and removing existing container..."
-    docker stop app-container 2>/dev/null || true
-    docker rm app-container 2>/dev/null || true
+    # Correctly silence both stdout and stderr
+    docker stop app-container > /dev/null 2>&1 || true
+    docker rm app-container > /dev/null 2>&1 || true
     
     echo "Running new container on $APP_PORT:$APP_PORT..."
     docker run -d --name app-container -p $APP_PORT:$APP_PORT app-deployment
@@ -230,15 +231,15 @@ ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
     if ! docker ps | grep -q "app-container"; then
       echo "Error: Container failed to start properly"
       docker logs app-container
-      exit 4 # Exit code for Docker start fail
+      exit 4
     fi
     echo "Application deployed successfully with Docker!"
 
     echo "--- (Remote) Validating Dockerfile app health (http://localhost:$APP_PORT) ---"
-    if ! curl -f http://localhost:$APP_PORT; then
+    if ! curl -f --connect-timeout 10 --max-time 30 http://localhost:$APP_PORT; then
         echo "ERROR: Health check failed for Dockerfile app at http://localhost:$APP_PORT"
         docker logs app-container
-        exit 5 # Exit code for Docker health fail
+        exit 5
     fi
     echo "--- (Remote) Dockerfile health check passed ---"
   fi
@@ -258,7 +259,6 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         
-        # Handle WebSocket connections
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -277,11 +277,11 @@ NGINX_EOF
   sudo systemctl reload nginx
   
   echo "--- (Remote) Validating Nginx proxy (127.0.0.1:80) ---"
-  if ! curl -f http://127.0.0.1; then
+  if ! curl -f --connect-timeout 10 --max-time 30 http://127.0.0.1; then
     echo "ERROR: Nginx proxy validation failed. Could not reach app via proxy."
     echo "Dumping Nginx error log:"
     sudo tail -n 20 /var/log/nginx/error.log || true
-    exit 6 # Exit code for Nginx fail
+    exit 6
   fi
 
   echo "Nginx configured and validated successfully!"
@@ -289,29 +289,27 @@ NGINX_EOF
   
 EOF
 
-# --- 6. Final Remote Validation ---
-log "--- Remote deployment finished. ---"
-log "--- Performing final validation from local machine... ---"
+# --- 5. Final Remote Validation ---
+echo "--- Remote deployment finished. ---"
+echo "--- Performing final validation from local machine... ---"
 
-if curl -f "http://$REMOTE_IP"; then
-  log "SUCCESS: Remote validation passed. Application is LIVE at http://$REMOTE_IP"
+if curl -f --connect-timeout 10 --max-time 30 "http://$REMOTE_IP"; then
+  echo "SUCCESS: Remote validation passed. Application is LIVE at http://$REMOTE_IP"
 else
-  log "ERROR: Remote validation FAILED. The site http://$REMOTE_IP is not accessible."
-  exit 7 
+  echo "ERROR: Remote validation FAILED. The site http://$REMOTE_IP is not accessible."
+  exit 7
 fi
 
-
-# --- 7. Summary ---
-log "--- Deployment finished successfully ---"
-echo "" 
-log "========================================="
-log "DEPLOYMENT SUMMARY"
-log "========================================="
-log "Repository: $REPO_NAME"
-log "Branch: $BRANCH_NAME"
-log "Server: $REMOTE_USER@$REMOTE_IP"
-log "Application URL: http://$REMOTE_IP"
-log "Log File: $LOG_FILE"
-log "========================================="
+# --- 6. Summary ---
+echo "--- Deployment finished successfully ---"
 echo ""
-log "Deployment completed!"
+echo "========================================="
+echo "DEPLOYMENT SUMMARY"
+echo "========================================="
+echo "Repository: $REPO_NAME"
+echo "Branch: $BRANCH_NAME"
+echo "Server: $REMOTE_USER@$REMOTE_IP"
+echo "Application URL: http://$REMOTE_IP"
+echo "========================================="
+echo ""
+echo "Deployment completed!"
